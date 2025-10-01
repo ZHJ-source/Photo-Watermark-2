@@ -314,6 +314,9 @@ class WorkingWatermarkApp:
             pos_x = int(pos_x * self.display_scale)
             pos_y = int(pos_y * self.display_scale)
             font_size = int(font_size * self.display_scale)
+            print(f"预览模式: 缩放后位置({pos_x}, {pos_y}), 字体大小{font_size}, 缩放比例{self.display_scale}")
+        else:
+            print(f"导出模式: 原始位置({pos_x}, {pos_y}), 字体大小{font_size}")
         
         # 计算字体（支持中文）
         try:
@@ -546,7 +549,14 @@ class WorkingWatermarkApp:
                 # 加载原图
                 original_img = Image.open(img_path)
                 
+                # 清除预览缩放属性，确保导出使用原始尺寸
+                if hasattr(self, 'display_scale'):
+                    delattr(self, 'display_scale')
+                
                 # 添加水印
+                print(f"导出图片: {os.path.basename(img_path)}")
+                print(f"导出时水印位置: {self.watermark_config['position']}")
+                print(f"导出时图片尺寸: {original_img.size}")
                 watermarked_img = self.add_watermark_to_image(original_img)
                 
                 # 生成输出文件名
