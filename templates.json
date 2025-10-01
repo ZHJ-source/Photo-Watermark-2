@@ -1,1 +1,32 @@
-{}
+{
+  "红-中": {
+    "text": "水印文字",
+    "font_size": 200,
+    "font_color": [
+      255,
+      0,
+      0
+    ],
+    "opacity": 100,
+    "position": [
+      1550,
+      1207
+    ],
+    "rotation": 0
+  },
+  "绿-下": {
+    "text": "水印文字",
+    "font_size": 200,
+    "font_color": [
+      0,
+      255,
+      0
+    ],
+    "opacity": 100,
+    "position": [
+      1550,
+      2404
+    ],
+    "rotation": 0
+  }
+}

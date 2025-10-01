@@ -113,6 +113,21 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### 构建可执行文件
+如果需要创建可执行文件进行分发，请查看 `build-tools/` 目录：
+
+```bash
+# 快速构建（推荐）
+cd build-tools
+python quick_build.py
+
+# 完整构建
+cd build-tools
+python build.py
+```
+
+详细构建说明请参考 `build-tools/BUILD_GUIDE.md`。
+
 ### 使用步骤
 1. **导入图片**：点击"导入图片"或"导入文件夹"
 2. **设置水印**：输入文字、调整字体大小、选择颜色
@@ -128,7 +143,18 @@ Photo-Watermark-2/
 ├── main.py              # 主程序文件
 ├── requirements.txt     # 依赖包列表
 ├── README.md           # 说明文档
-└── templates.json      # 模板配置文件（预留）
+├── templates.json      # 模板配置文件
+├── 作业要求.md         # 作业要求文档
+├── .gitignore          # Git忽略文件
+└── build-tools/        # 构建工具目录
+    ├── quick_build.py      # 快速构建脚本
+    ├── build.py            # 完整构建脚本
+    ├── create_installer.py # 安装包制作脚本
+    ├── build.spec          # PyInstaller配置
+    ├── BUILD_GUIDE.md      # 详细构建指南
+    ├── RELEASE_README.md   # 发布说明
+    ├── .github/workflows/  # GitHub Actions配置
+    └── PhotoWatermark-v1.0.0-macos-arm64.zip # 已构建的发布包
 ```
 
 ## 开发进度

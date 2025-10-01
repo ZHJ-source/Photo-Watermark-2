@@ -1,0 +1,119 @@
+name: 构建跨平台Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            exe_name: PhotoWatermark.exe
+          - os: macos-latest
+            arch: x64
+            exe_name: PhotoWatermark
+          - os: macos-latest
+            arch: arm64
+            exe_name: PhotoWatermark
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller>=5.0
+        
+    - name: 构建Windows版本
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller build.spec
+        echo "构建完成"
+        
+    - name: 构建Mac版本
+      if: matrix.os == 'macos-latest'
+      run: |
+        pyinstaller build.spec
+        echo "构建完成"
+        
+    - name: 创建发布包
+      run: |
+        mkdir -p release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}
+        
+        # 复制可执行文件
+        cp dist/${{ matrix.exe_name }} release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/
+        
+        # 复制必要文件
+        cp templates.json release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/ 2>/dev/null || echo "templates.json not found"
+        cp README.md release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/
+        
+        # 创建启动脚本
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          echo "@echo off" > release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.bat
+          echo "echo 正在启动照片水印工具..." >> release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.bat
+          echo "PhotoWatermark.exe" >> release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.bat
+          echo "pause" >> release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.bat
+        else
+          echo "#!/bin/bash" > release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.sh
+          echo "echo \"正在启动照片水印工具...\"" >> release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.sh
+          echo "./PhotoWatermark" >> release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.sh
+          chmod +x release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/启动程序.sh
+        fi
+        
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}
+        path: release/PhotoWatermark-${{ matrix.os }}-${{ matrix.arch }}/
+        
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: 下载所有构建产物
+      uses: actions/download-artifact@v3
+      
+    - name: 创建Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          PhotoWatermark-windows-latest-x64/PhotoWatermark-windows-latest-x64.zip
+          PhotoWatermark-macos-latest-x64/PhotoWatermark-macos-latest-x64.zip
+          PhotoWatermark-macos-latest-arm64/PhotoWatermark-macos-latest-arm64.zip
+        body: |
+          ## 照片水印工具 v${{ github.ref_name }}
+          
+          ### 下载说明
+          - **Windows**: 下载 `PhotoWatermark-windows-latest-x64.zip`，解压后双击 `启动程序.bat` 运行
+          - **Mac Intel**: 下载 `PhotoWatermark-macos-latest-x64.zip`，解压后双击 `启动程序.sh` 运行
+          - **Mac Apple Silicon**: 下载 `PhotoWatermark-macos-latest-arm64.zip`，解压后双击 `启动程序.sh` 运行
+          
+          ### 使用说明
+          1. 解压下载的文件
+          2. 双击对应的启动程序
+          3. 开始使用照片水印工具
+          
+          ### 功能特性
+          - 支持批量图片处理
+          - 实时预览水印效果
+          - 支持自定义文字水印
+          - 支持拖拽调整位置
+          - 支持水印模板保存
+        draft: false
+        prerelease: false
