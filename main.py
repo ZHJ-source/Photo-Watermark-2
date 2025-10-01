@@ -91,9 +91,13 @@ class WorkingWatermarkApp:
         # 字体大小
         ttk.Label(frame, text="字体大小:").pack(anchor=tk.W)
         self.font_size_var = tk.IntVar(value=self.watermark_config['font_size'])
-        font_scale = ttk.Scale(frame, from_=10, to=100, variable=self.font_size_var, 
+        font_scale = ttk.Scale(frame, from_=10, to=200, variable=self.font_size_var, 
                              orient=tk.HORIZONTAL, command=self.update_watermark)
         font_scale.pack(fill=tk.X, pady=(0, 5))
+        
+        # 字体大小数值显示
+        self.font_size_label = ttk.Label(frame, text=f"当前: {self.watermark_config['font_size']}px")
+        self.font_size_label.pack(anchor=tk.W)
         
         # 颜色选择
         color_frame = ttk.Frame(frame)
@@ -160,8 +164,22 @@ class WorkingWatermarkApp:
         self.preview_canvas = tk.Canvas(frame, bg="white", width=600, height=400)
         self.preview_canvas.pack(fill=tk.BOTH, expand=True)
         
+        # 绑定鼠标事件用于拖拽水印
+        self.preview_canvas.bind("<Button-1>", self.on_canvas_click)
+        self.preview_canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.preview_canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        
+        # 拖拽状态
+        self.dragging = False
+        self.drag_start_pos = None
+        
         # 显示提示
         self.preview_canvas.create_text(300, 200, text="请导入图片", font=("Arial", 16), fill="gray")
+        
+        # 添加拖拽提示
+        self.drag_hint_label = ttk.Label(frame, text="💡 提示：在预览区域点击并拖拽可以调整水印位置", 
+                                        foreground="blue", font=("Arial", 10))
+        self.drag_hint_label.pack(pady=(5, 0))
         
         # 预览控制
         control_frame = ttk.Frame(frame)
@@ -287,25 +305,34 @@ class WorkingWatermarkApp:
         draw = ImageDraw.Draw(img)
         
         # 计算水印位置和字体大小
-        if hasattr(self, 'display_scale'):
-            # 预览模式：使用缩放后的尺寸
-            pos_x = int(self.watermark_config['position'][0] * self.display_scale)
-            pos_y = int(self.watermark_config['position'][1] * self.display_scale)
-            font_size = int(self.watermark_config['font_size'] * self.display_scale)
-        else:
-            # 导出模式：使用原始尺寸
-            pos_x, pos_y = self.watermark_config['position']
-            font_size = self.watermark_config['font_size']
+        # 始终使用原始图片尺寸进行位置计算，确保预览和导出一致
+        pos_x, pos_y = self.watermark_config['position']
+        font_size = self.watermark_config['font_size']
         
-        # 计算字体
+        # 如果是预览模式，需要将位置和字体大小按比例缩放
+        if hasattr(self, 'display_scale'):
+            pos_x = int(pos_x * self.display_scale)
+            pos_y = int(pos_y * self.display_scale)
+            font_size = int(font_size * self.display_scale)
+        
+        # 计算字体（支持中文）
         try:
-            font = ImageFont.truetype("arial.ttf", font_size)
+            # 优先尝试中文字体
+            font = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", font_size)
         except:
             try:
-                # 尝试使用系统字体
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", font_size)
+                font = ImageFont.truetype("/System/Library/Fonts/STHeiti Light.ttc", font_size)
             except:
-                font = ImageFont.load_default()
+                try:
+                    font = ImageFont.truetype("/System/Library/Fonts/Arial Unicode MS.ttf", font_size)
+                except:
+                    try:
+                        font = ImageFont.truetype("arial.ttf", font_size)
+                    except:
+                        try:
+                            font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", font_size)
+                        except:
+                            font = ImageFont.load_default()
         
         # 计算透明度
         alpha = int(255 * self.watermark_config['opacity'] / 100)
@@ -353,7 +380,12 @@ class WorkingWatermarkApp:
         self.watermark_config['opacity'] = self.opacity_var.get()
         self.watermark_config['rotation'] = self.rotation_var.get()
         
+        # 更新字体大小显示
+        if hasattr(self, 'font_size_label'):
+            self.font_size_label.config(text=f"当前: {self.watermark_config['font_size']}px")
+        
         if self.current_image:
+            # 直接更新，提高响应速度
             self.display_image()
     
     def choose_color(self):
@@ -377,14 +409,23 @@ class WorkingWatermarkApp:
         img_width = self.current_image.width
         img_height = self.current_image.height
         
-        # 获取水印文字的大致尺寸
+        # 获取水印文字的大致尺寸（支持中文）
         try:
-            font = ImageFont.truetype("arial.ttf", self.watermark_config['font_size'])
+            font = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", self.watermark_config['font_size'])
         except:
             try:
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", self.watermark_config['font_size'])
+                font = ImageFont.truetype("/System/Library/Fonts/STHeiti Light.ttc", self.watermark_config['font_size'])
             except:
-                font = ImageFont.load_default()
+                try:
+                    font = ImageFont.truetype("/System/Library/Fonts/Arial Unicode MS.ttf", self.watermark_config['font_size'])
+                except:
+                    try:
+                        font = ImageFont.truetype("arial.ttf", self.watermark_config['font_size'])
+                    except:
+                        try:
+                            font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", self.watermark_config['font_size'])
+                        except:
+                            font = ImageFont.load_default()
         
         # 估算文字尺寸
         bbox = font.getbbox(self.watermark_config['text'])
@@ -409,6 +450,48 @@ class WorkingWatermarkApp:
         
         self.watermark_config['position'] = (pos_x, pos_y)
         self.display_image()
+    
+    def on_canvas_click(self, event):
+        """画布点击事件"""
+        if not self.current_image or not self.watermark_config['text']:
+            return
+        
+        # 简化：直接开始拖拽，不检查是否点击在水印上
+        # 这样更容易使用
+        self.dragging = True
+        self.drag_start_pos = (event.x, event.y)
+        self.preview_canvas.config(cursor="hand2")
+        print(f"开始拖拽: 点击位置({event.x}, {event.y})")
+    
+    def on_canvas_drag(self, event):
+        """画布拖拽事件"""
+        if not self.dragging or not self.current_image:
+            return
+        
+        if hasattr(self, 'display_scale') and hasattr(self, 'display_offset_x'):
+            # 计算新的水印位置（转换为原始图片坐标）
+            new_x = (event.x - self.display_offset_x) / self.display_scale
+            new_y = (event.y - self.display_offset_y) / self.display_scale
+            
+            # 确保位置在图片范围内
+            img_width = self.current_image.width
+            img_height = self.current_image.height
+            new_x = max(0, min(new_x, img_width))
+            new_y = max(0, min(new_y, img_height))
+            
+            # 更新水印位置
+            self.watermark_config['position'] = (int(new_x), int(new_y))
+            
+            # 直接更新显示，提高响应速度
+            self.display_image()
+            print(f"拖拽中: 新位置({int(new_x)}, {int(new_y)})")
+    
+    def on_canvas_release(self, event):
+        """画布释放事件"""
+        if self.dragging:
+            self.dragging = False
+            self.drag_start_pos = None
+            self.preview_canvas.config(cursor="")
     
     def prev_image(self):
         """上一张图片"""
