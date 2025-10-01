@@ -21,7 +21,10 @@ class WorkingWatermarkApp:
         self.images = []
         self.current_image_index = 0
         self.current_image = None
-        self.watermark_config = {
+        
+        # 每张图片的独立水印配置
+        self.image_watermark_configs = {}  # 每张图片的独立水印配置
+        self.default_watermark_config = {
             'text': '水印文字',
             'font_size': 24,
             'font_color': (255, 0, 0),
@@ -29,6 +32,12 @@ class WorkingWatermarkApp:
             'position': (50, 50),
             'rotation': 0
         }
+        self.watermark_config = self.default_watermark_config.copy()  # 当前显示的水印配置
+        
+        # 模板系统
+        self.templates = {}
+        self.template_file = "templates.json"
+        self.load_templates()
         
         self.create_widgets()
         
@@ -38,20 +47,42 @@ class WorkingWatermarkApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # 左侧控制面板
+        # 左侧控制面板（带滚动条）
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         control_frame.config(width=350)  # 设置固定宽度
+        
+        # 创建滚动画布
+        self.control_canvas = tk.Canvas(control_frame, width=350, height=700)
+        self.control_scrollbar = ttk.Scrollbar(control_frame, orient="vertical", command=self.control_canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.control_canvas)
+        
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.control_canvas.configure(scrollregion=self.control_canvas.bbox("all"))
+        )
+        
+        self.control_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.control_canvas.configure(yscrollcommand=self.control_scrollbar.set)
+        
+        self.control_canvas.pack(side="left", fill="both", expand=True)
+        self.control_scrollbar.pack(side="right", fill="y")
+        
+        # 绑定鼠标滚轮事件
+        self.control_canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.control_canvas.bind("<Button-4>", self._on_mousewheel)  # Linux
+        self.control_canvas.bind("<Button-5>", self._on_mousewheel)  # Linux
         
         # 右侧预览区域
         preview_frame = ttk.Frame(main_frame)
         preview_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
         # 创建各个面板
-        self.create_file_panel(control_frame)
-        self.create_watermark_panel(control_frame)
-        self.create_position_panel(control_frame)
-        self.create_export_panel(control_frame)
+        self.create_file_panel(self.scrollable_frame)
+        self.create_watermark_panel(self.scrollable_frame)
+        self.create_position_panel(self.scrollable_frame)
+        self.create_template_panel(self.scrollable_frame)
+        self.create_export_panel(self.scrollable_frame)
         self.create_preview_panel(preview_frame)
         
     def create_file_panel(self, parent):
@@ -141,6 +172,45 @@ class WorkingWatermarkApp:
             btn = ttk.Button(pos_frame, text=name, width=6,
                            command=lambda p=pos: self.set_position(p))
             btn.grid(row=i//3, column=i%3, padx=2, pady=2)
+    
+    def create_template_panel(self, parent):
+        """创建模板管理面板"""
+        frame = ttk.LabelFrame(parent, text="水印模板", padding=10)
+        frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 模板操作按钮
+        template_btn_frame = ttk.Frame(frame)
+        template_btn_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Button(template_btn_frame, text="保存模板", command=self.save_template).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(template_btn_frame, text="应用模板", command=self.apply_template).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(template_btn_frame, text="批量应用", command=self.batch_apply_template).pack(side=tk.LEFT)
+        
+        # 模板名称输入
+        ttk.Label(frame, text="模板名称:").pack(anchor=tk.W)
+        self.template_name_entry = ttk.Entry(frame)
+        self.template_name_entry.pack(fill=tk.X, pady=(0, 5))
+        self.template_name_entry.insert(0, "默认模板")
+        
+        # 模板列表
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        
+        self.template_listbox = tk.Listbox(list_frame, height=4)
+        template_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.template_listbox.yview)
+        self.template_listbox.configure(yscrollcommand=template_scrollbar.set)
+        
+        self.template_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        template_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.template_listbox.bind('<Double-Button-1>', self.quick_apply_template)
+        self.template_listbox.bind('<<ListboxSelect>>', self.on_template_select)
+        
+        # 删除模板按钮
+        ttk.Button(frame, text="删除选中模板", command=self.delete_template).pack(fill=tk.X, pady=(5, 0))
+        
+        # 更新模板列表显示
+        self.update_template_list()
         
     def create_export_panel(self, parent):
         """创建导出设置面板"""
@@ -244,10 +314,34 @@ class WorkingWatermarkApp:
         try:
             img_path = self.images[self.current_image_index]
             self.current_image = Image.open(img_path)
+            
+            # 加载当前图片的水印配置
+            self.load_watermark_config_for_current_image()
+            
             self.display_image()
             self.update_image_info()
         except Exception as e:
             messagebox.showerror("错误", f"无法加载图片: {e}")
+    
+    def save_current_watermark_config(self):
+        """保存当前图片的水印配置"""
+        if self.images and 0 <= self.current_image_index < len(self.images):
+            img_path = self.images[self.current_image_index]
+            self.image_watermark_configs[img_path] = self.watermark_config.copy()
+    
+    def load_watermark_config_for_current_image(self):
+        """加载当前图片的水印配置"""
+        if self.images and 0 <= self.current_image_index < len(self.images):
+            img_path = self.images[self.current_image_index]
+            if img_path in self.image_watermark_configs:
+                # 加载该图片的独立配置
+                self.watermark_config = self.image_watermark_configs[img_path].copy()
+            else:
+                # 使用默认配置
+                self.watermark_config = self.default_watermark_config.copy()
+            
+            # 更新UI显示
+            self.update_ui_from_config()
     
     def display_image(self):
         """在预览区域显示图片"""
@@ -387,6 +481,9 @@ class WorkingWatermarkApp:
         if hasattr(self, 'font_size_label'):
             self.font_size_label.config(text=f"当前: {self.watermark_config['font_size']}px")
         
+        # 保存当前图片的水印配置
+        self.save_current_watermark_config()
+        
         if self.current_image:
             # 直接更新，提高响应速度
             self.display_image()
@@ -397,6 +494,10 @@ class WorkingWatermarkApp:
         if color[0]:
             self.watermark_config['font_color'] = tuple(int(c) for c in color[0])
             self.color_label.config(fg=self.rgb_to_hex(self.watermark_config['font_color']))
+            
+            # 保存当前图片的水印配置
+            self.save_current_watermark_config()
+            
             self.update_watermark()
     
     def rgb_to_hex(self, rgb):
@@ -452,6 +553,10 @@ class WorkingWatermarkApp:
         print(f"位置计算: 坐标{position} -> 像素位置({pos_x}, {pos_y}), 图片尺寸({img_width}x{img_height}), 文字尺寸({text_width}x{text_height})")
         
         self.watermark_config['position'] = (pos_x, pos_y)
+        
+        # 保存当前图片的水印配置
+        self.save_current_watermark_config()
+        
         self.display_image()
     
     def on_canvas_click(self, event):
@@ -484,6 +589,9 @@ class WorkingWatermarkApp:
             
             # 更新水印位置
             self.watermark_config['position'] = (int(new_x), int(new_y))
+            
+            # 保存当前图片的水印配置
+            self.save_current_watermark_config()
             
             # 直接更新显示，提高响应速度
             self.display_image()
@@ -553,11 +661,24 @@ class WorkingWatermarkApp:
                 if hasattr(self, 'display_scale'):
                     delattr(self, 'display_scale')
                 
+                # 使用该图片的独立水印配置
+                if img_path in self.image_watermark_configs:
+                    img_watermark_config = self.image_watermark_configs[img_path]
+                else:
+                    img_watermark_config = self.default_watermark_config
+                
+                # 临时保存当前配置，使用图片的独立配置
+                temp_config = self.watermark_config.copy()
+                self.watermark_config = img_watermark_config.copy()
+                
                 # 添加水印
                 print(f"导出图片: {os.path.basename(img_path)}")
                 print(f"导出时水印位置: {self.watermark_config['position']}")
                 print(f"导出时图片尺寸: {original_img.size}")
                 watermarked_img = self.add_watermark_to_image(original_img)
+                
+                # 恢复当前配置
+                self.watermark_config = temp_config
                 
                 # 生成输出文件名
                 filename = os.path.basename(img_path)
@@ -580,6 +701,149 @@ class WorkingWatermarkApp:
             
         except Exception as e:
             messagebox.showerror("错误", f"导出失败: {e}")
+    
+    # 模板系统方法
+    def load_templates(self):
+        """加载模板文件"""
+        try:
+            if os.path.exists(self.template_file):
+                with open(self.template_file, 'r', encoding='utf-8') as f:
+                    self.templates = json.load(f)
+            else:
+                self.templates = {}
+        except Exception as e:
+            print(f"加载模板失败: {e}")
+            self.templates = {}
+    
+    def save_templates(self):
+        """保存模板到文件"""
+        try:
+            with open(self.template_file, 'w', encoding='utf-8') as f:
+                json.dump(self.templates, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            messagebox.showerror("错误", f"保存模板失败: {e}")
+    
+    def save_template(self):
+        """保存当前设置为模板"""
+        template_name = self.template_name_entry.get().strip()
+        if not template_name:
+            messagebox.showwarning("警告", "请输入模板名称")
+            return
+        
+        # 保存当前水印配置
+        self.templates[template_name] = self.watermark_config.copy()
+        self.save_templates()
+        self.update_template_list()
+        messagebox.showinfo("成功", f"模板 '{template_name}' 已保存")
+    
+    def apply_template(self):
+        """应用选中的模板到当前图片"""
+        selection = self.template_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请选择一个模板")
+            return
+        
+        template_name = self.template_listbox.get(selection[0])
+        if template_name in self.templates:
+            # 应用模板设置到当前图片
+            self.watermark_config.update(self.templates[template_name])
+            self.update_ui_from_config()
+            
+            # 保存当前图片的水印配置
+            self.save_current_watermark_config()
+            
+            self.display_image()
+            messagebox.showinfo("成功", f"已应用模板 '{template_name}' 到当前图片")
+        else:
+            messagebox.showerror("错误", "模板不存在")
+    
+    def batch_apply_template(self):
+        """批量应用模板到所有图片"""
+        selection = self.template_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请选择一个模板")
+            return
+        
+        template_name = self.template_listbox.get(selection[0])
+        if template_name not in self.templates:
+            messagebox.showerror("错误", "模板不存在")
+            return
+        
+        if not self.images:
+            messagebox.showwarning("警告", "请先导入图片")
+            return
+        
+        # 确认批量应用
+        result = messagebox.askyesno("确认", f"确定要将模板 '{template_name}' 应用到所有 {len(self.images)} 张图片吗？\n这将覆盖每张图片的独立水印设置。")
+        if not result:
+            return
+        
+        # 批量应用模板到每张图片的独立配置
+        template_config = self.templates[template_name]
+        for img_path in self.images:
+            self.image_watermark_configs[img_path] = template_config.copy()
+        
+        # 应用模板到当前显示
+        self.watermark_config.update(template_config)
+        self.update_ui_from_config()
+        self.display_image()
+        
+        messagebox.showinfo("成功", f"模板 '{template_name}' 已批量应用到所有 {len(self.images)} 张图片")
+    
+    def quick_apply_template(self, event):
+        """双击快速应用模板"""
+        self.apply_template()
+    
+    def on_template_select(self, event):
+        """模板选择事件"""
+        selection = self.template_listbox.curselection()
+        if selection:
+            template_name = self.template_listbox.get(selection[0])
+            self.template_name_entry.delete(0, tk.END)
+            self.template_name_entry.insert(0, template_name)
+    
+    def delete_template(self):
+        """删除选中的模板"""
+        selection = self.template_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请选择一个模板")
+            return
+        
+        template_name = self.template_listbox.get(selection[0])
+        result = messagebox.askyesno("确认", f"确定要删除模板 '{template_name}' 吗？")
+        if result:
+            del self.templates[template_name]
+            self.save_templates()
+            self.update_template_list()
+            messagebox.showinfo("成功", f"模板 '{template_name}' 已删除")
+    
+    def update_template_list(self):
+        """更新模板列表显示"""
+        self.template_listbox.delete(0, tk.END)
+        for template_name in self.templates.keys():
+            self.template_listbox.insert(tk.END, template_name)
+    
+    def update_ui_from_config(self):
+        """从配置更新UI控件"""
+        # 更新文本输入
+        self.text_entry.delete(0, tk.END)
+        self.text_entry.insert(0, self.watermark_config['text'])
+        
+        # 更新滑块
+        self.font_size_var.set(self.watermark_config['font_size'])
+        self.opacity_var.set(self.watermark_config['opacity'])
+        self.rotation_var.set(self.watermark_config['rotation'])
+        
+        # 更新颜色显示
+        self.color_label.config(fg=self.rgb_to_hex(self.watermark_config['font_color']))
+        
+        # 更新字体大小显示
+        if hasattr(self, 'font_size_label'):
+            self.font_size_label.config(text=f"当前: {self.watermark_config['font_size']}px")
+    
+    def _on_mousewheel(self, event):
+        """鼠标滚轮事件处理"""
+        self.control_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
 def main():
     root = tk.Tk()
