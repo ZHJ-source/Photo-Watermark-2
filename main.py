@@ -14,8 +14,8 @@ class WorkingWatermarkApp:
     def __init__(self, root):
         self.root = root
         self.root.title("照片水印工具")
-        self.root.geometry("1200x800")
-        self.root.minsize(1000, 600)
+        self.root.geometry("1400x900")
+        self.root.minsize(1200, 700)
         
         # 数据存储
         self.images = []
@@ -41,6 +41,7 @@ class WorkingWatermarkApp:
         # 左侧控制面板
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        control_frame.config(width=350)  # 设置固定宽度
         
         # 右侧预览区域
         preview_frame = ttk.Frame(main_frame)
@@ -253,7 +254,10 @@ class WorkingWatermarkApp:
         new_height = int(img.height * scale)
         img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        # 添加水印
+        # 保存缩放信息，用于水印位置计算
+        self.display_scale = scale
+        
+        # 添加水印（使用缩放后的图片）
         img = self.add_watermark_to_image(img)
         
         # 转换为PhotoImage
@@ -275,29 +279,33 @@ class WorkingWatermarkApp:
         if not self.watermark_config['text']:
             return img
         
+        # 确保图片是RGBA模式
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+        
         # 创建绘图对象
         draw = ImageDraw.Draw(img)
         
-        # 计算字体
-        try:
-            font = ImageFont.truetype("arial.ttf", self.watermark_config['font_size'])
-        except:
-            font = ImageFont.load_default()
-        
-        # 计算水印位置
+        # 计算水印位置和字体大小
         if hasattr(self, 'display_scale'):
+            # 预览模式：使用缩放后的尺寸
             pos_x = int(self.watermark_config['position'][0] * self.display_scale)
             pos_y = int(self.watermark_config['position'][1] * self.display_scale)
             font_size = int(self.watermark_config['font_size'] * self.display_scale)
         else:
+            # 导出模式：使用原始尺寸
             pos_x, pos_y = self.watermark_config['position']
             font_size = self.watermark_config['font_size']
         
-        # 调整字体大小
+        # 计算字体
         try:
             font = ImageFont.truetype("arial.ttf", font_size)
         except:
-            font = ImageFont.load_default()
+            try:
+                # 尝试使用系统字体
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", font_size)
+            except:
+                font = ImageFont.load_default()
         
         # 计算透明度
         alpha = int(255 * self.watermark_config['opacity'] / 100)
@@ -305,19 +313,37 @@ class WorkingWatermarkApp:
         
         # 绘制水印
         if self.watermark_config['rotation'] != 0:
-            # 创建临时图片用于旋转
-            temp_img = Image.new('RGBA', (img.width, img.height), (0, 0, 0, 0))
-            temp_draw = ImageDraw.Draw(temp_img)
-            temp_draw.text((pos_x, pos_y), self.watermark_config['text'], font=font, fill=color)
+            # 先获取文字边界框
+            bbox = draw.textbbox((0, 0), self.watermark_config['text'], font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
             
-            # 旋转
+            # 创建只包含文字的临时图片
+            temp_img = Image.new('RGBA', (text_width + 20, text_height + 20), (0, 0, 0, 0))
+            temp_draw = ImageDraw.Draw(temp_img)
+            temp_draw.text((10, 10), self.watermark_config['text'], font=font, fill=color)
+            
+            # 围绕文字中心旋转
             rotated = temp_img.rotate(self.watermark_config['rotation'], expand=True)
             
+            # 计算在原图中的粘贴位置（考虑旋转后的偏移）
+            paste_x = pos_x - (rotated.width - text_width) // 2
+            paste_y = pos_y - (rotated.height - text_height) // 2
+            
+            # 确保粘贴位置在图片范围内
+            paste_x = max(0, min(paste_x, img.width - rotated.width))
+            paste_y = max(0, min(paste_y, img.height - rotated.height))
+            
+            # 创建与原图相同尺寸的透明图片
+            final_watermark = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            final_watermark.paste(rotated, (paste_x, paste_y), rotated)
+            
             # 合并到原图
-            img = Image.alpha_composite(img.convert('RGBA'), rotated).convert(img.mode)
+            img = Image.alpha_composite(img, final_watermark)
         else:
             draw.text((pos_x, pos_y), self.watermark_config['text'], font=font, fill=color)
         
+        # 转换回原始模式
         return img
     
     def update_watermark(self, *args):
@@ -347,12 +373,39 @@ class WorkingWatermarkApp:
         if not self.current_image:
             return
         
-        # 计算实际位置
+        # 计算实际位置（使用原始图片尺寸）
         img_width = self.current_image.width
         img_height = self.current_image.height
         
-        pos_x = int(position[0] * img_width)
-        pos_y = int(position[1] * img_height)
+        # 获取水印文字的大致尺寸
+        try:
+            font = ImageFont.truetype("arial.ttf", self.watermark_config['font_size'])
+        except:
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", self.watermark_config['font_size'])
+            except:
+                font = ImageFont.load_default()
+        
+        # 估算文字尺寸
+        bbox = font.getbbox(self.watermark_config['text'])
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        # 计算位置，确保水印在图片范围内
+        # 使用比例计算位置，支持任意坐标值
+        # 0.0 = 左边/上边，0.5 = 中间，1.0 = 右边/下边
+        available_width = img_width - text_width - 20  # 可用宽度（减去边距）
+        available_height = img_height - text_height - 20  # 可用高度（减去边距）
+        
+        pos_x = int(position[0] * available_width + 10)
+        pos_y = int(position[1] * available_height + 10)
+        
+        # 确保位置在图片范围内
+        pos_x = max(10, min(pos_x, img_width - text_width - 10))
+        pos_y = max(10, min(pos_y, img_height - text_height - 10))
+        
+        # 调试信息（可以在控制台看到）
+        print(f"位置计算: 坐标{position} -> 像素位置({pos_x}, {pos_y}), 图片尺寸({img_width}x{img_height}), 文字尺寸({text_width}x{text_height})")
         
         self.watermark_config['position'] = (pos_x, pos_y)
         self.display_image()
@@ -420,7 +473,14 @@ class WorkingWatermarkApp:
                 
                 # 保存图片
                 output_path = os.path.join(self.output_folder, new_filename)
-                watermarked_img.save(output_path, quality=95)
+                # 确保保存时使用正确的模式
+                if watermarked_img.mode == 'RGBA':
+                    # 如果是RGBA模式，转换为RGB保存
+                    rgb_img = Image.new('RGB', watermarked_img.size, (255, 255, 255))
+                    rgb_img.paste(watermarked_img, mask=watermarked_img.split()[-1])
+                    rgb_img.save(output_path, quality=95)
+                else:
+                    watermarked_img.save(output_path, quality=95)
             
             messagebox.showinfo("成功", f"已导出 {total} 张图片到 {self.output_folder}")
             self.image_info_label.config(text=f"导出完成: {total} 张图片")
